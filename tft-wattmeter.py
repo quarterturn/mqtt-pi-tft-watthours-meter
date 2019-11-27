@@ -10,7 +10,8 @@ import string
 import paho.mqtt.client as mqtt
 
 # font colours
-colorWhite = (255, 255, 255)
+# make it look like a VFD
+colorWhite = (82, 255, 239)
 colorBlack = (0, 0, 0)
 
 # meter variables
@@ -26,9 +27,8 @@ winter_cost_per_wh = 0.00009336
 base_rate = 11.13
 cost_of_reading = 0
 
-# font colours
-colorWhite = (255, 255, 255)
-colorBlack = (0, 0, 0)
+# file to store total in case of power failure
+data_file = '/var/tmp/day_power_cost.txt'
 
 class pitft :
     screen = None;
@@ -66,6 +66,8 @@ class pitft :
         pygame.font.init()
         # Render the screen
         pygame.display.update()
+
+
 
     def __del__(self):
         "Destructor to make sure pygame shuts down, etc."
@@ -118,11 +120,19 @@ def on_message(mqttc, obj, msg):
             cost_per_day = 0
             cost_per_month = base_rate   
             previous_month = datetime.now().strftime('%m')
+            # reset the stored day total
+            f = open(data_file, 'w+')
+            f.write('0')
+            f.close()
         # check for day rollover
         if previous_day != datetime.now().strftime('%d'):
             # reset the day cost to zero
             cost_per_day = 0
             previous_day = datetime.now().strftime('%d')
+            # reset the stored day total
+            f = open(data_file, 'w+')
+            f.write('0.0')
+            f.close()
         # summer rate
         if datetime.now().strftime('%m') in (7, 8, 9, 10):
             cost_of_reading = summer_cost_per_wh * float(msg.payload)
@@ -152,8 +162,15 @@ def on_message(mqttc, obj, msg):
         mytft.screen.blit(text_surface, (text_anchor_x, text_anchor_y))
 
 
-    # refresh the screen with all the changes
+        # refresh the screen with all the changes
         pygame.display.update()
+
+        # update the file
+        f = open(data_file, 'w+')
+        f.write(str(cost_per_day))
+        f.close()
+
+        time.sleep(0.1)
 
 def on_publish(mqttc, obj, mid):
     print("mid: " + str(mid))
@@ -173,12 +190,19 @@ def on_log(mqttc, obj, level, string):
 fontpath = pygame.font.match_font('dejavusansmono')
 
 # main code
-client = mqtt.Client()
+# load up the stored cost for the day in case of reboot etc...
+if os.path.exists(data_file):
+    f = open(data_file, 'r')
+    lines = f.readlines()
+    f.close()
+    cost_per_day = float(lines[0].strip('\n'))
+
+client = mqtt.Client(client_id="pipaper", clean_session=False)
 client.on_message = on_message
 client.on_connect = on_connect
 
 client.connect("192.168.0.21")
 
-client.subscribe("house_data/watthours")
+client.subscribe("house_data/watthours", qos=1)
 
 client.loop_forever()
